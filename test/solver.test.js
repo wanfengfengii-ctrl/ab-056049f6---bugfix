@@ -207,3 +207,51 @@ test('超大有限坐标：内侧组合也可行但裕量更小（9e306 < 1e307�
   assert.ok(Math.abs(outer.metrics.minMargin - 1e307) / 1e307 < 1e-12);
   assert.ok(outer.metrics.minMargin > inner.metrics.minMargin);
 });
+
+test('极端有限长宽比（宽 1e308、高 1e-100）不被误判为 hull_degenerate', () => {
+  // 四条导轨各一个候选点，组成宽 1e308、高 1e-100 的矩形；
+  // 批准边界同该矩形，重心 (5e307, 5e-101) 严格位于内部，
+  // 到最近水平边裕量为 5e-101，容差与最小间距均为 0。
+  const W = 1e308;
+  const H = 1e-100;
+  const rect = [
+    { x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: H }, { x: 0, y: H },
+  ];
+  const payload = {
+    rails: [[rect[0]], [rect[1]], [rect[2]], [rect[3]]],
+    boundary: rect,
+    cg: { x: 5e307, y: 5e-101 },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 0,
+  };
+  const r = solve(payload);
+  assert.equal(r.feasible, true, `应可行，实际 reason=${r.reason} message=${r.message}`);
+  assert.equal(r.reason, undefined);
+  assert.equal(r.evaluatedCombinations, 1);
+
+  // 四个唯一候选点全部被选中
+  assert.equal(r.selection.length, 4);
+  assert.deepEqual(r.metrics.indices, [0, 0, 0, 0]);
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [1, 1, 1, 1]);
+
+  // 凸包含四个顶点
+  assert.equal(r.hull.length, 4, `hull=${JSON.stringify(r.hull)}`);
+
+  // minMargin 与四角 margin 均为有限正数，约为 5e-101
+  assert.ok(Number.isFinite(r.metrics.minMargin), 'minMargin 必须有限');
+  assert.ok(r.metrics.minMargin > 0, 'minMargin 必须严格为正');
+  assert.ok(
+    Math.abs(r.metrics.minMargin - 5e-101) / 5e-101 < 1e-12,
+    `minMargin=${r.metrics.minMargin}`
+  );
+  assert.equal(r.corners.length, 4);
+  for (const c of r.corners) {
+    assert.ok(Number.isFinite(c.margin), '角点裕量必须有限');
+    assert.ok(c.margin > 0, '角点裕量必须严格为正');
+    assert.ok(
+      Math.abs(c.margin - 5e-101) / 5e-101 < 1e-12,
+      `角点(${c.label})裕量=${c.margin}`
+    );
+  }
+});

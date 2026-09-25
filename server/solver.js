@@ -19,7 +19,6 @@ import {
   polygonSignedArea,
 } from './geometry.js';
 
-const EPS = 1e-9;
 const RAIL_COUNT = 4;
 
 function isFiniteNumber(v) {
@@ -133,7 +132,9 @@ function evaluate(indices, input, corners) {
   }
 
   const { minGap, pair } = pairGap(points);
-  if (minGap + EPS < input.minSpacing) {
+  // 间距规则为 >= minSpacing：按有限 double 数值严格比较，
+  // 不设绝对容差（否则在 1e-100 量级会把达标间距误判为不足）。
+  if (minGap < input.minSpacing) {
     return {
       status: 'spacing_failed',
       stage: 1,
@@ -147,7 +148,9 @@ function evaluate(indices, input, corners) {
 
   const hull = ensureCCW(convexHull(points));
   const area = polygonSignedArea(hull);
-  if (hull.length < 3 || area <= EPS) {
+  // 退化只看“面积是否严格为正”：极端长宽比（宽 1e308、高 1e-100）下
+  // 面积真值 1e208 是有效面积，不能用任何固定绝对容差将其判为退化。
+  if (hull.length < 3 || !(area > 0)) {
     // 退化凸包：用角点到凸包点集/线段的最近距离量化“差多少”
     let worst = 0;
     for (const c of corners) {
@@ -176,7 +179,10 @@ function evaluate(indices, input, corners) {
   }));
   const minCornerMargin = Math.min(...cornerResults.map((c) => c.margin));
 
-  if (minCornerMargin <= EPS) {
+  // 规则要求四角“严格位于内部、有符号距离必须 > 0”：落在边上（0）或
+  // 外部（<0）均失败。按精确的 > 0 判定，不设绝对容差——真实裕量本身
+  // 可能极小（如 5e-101）但仍然为正，固定 1e-9 容差会将其误杀。
+  if (!(minCornerMargin > 0)) {
     return {
       status: 'corners_failed',
       stage: 3,
@@ -244,7 +250,7 @@ export function solve(raw) {
             if (
               closestFailure === null ||
               result.stage > closestFailure.stage ||
-              (result.stage === closestFailure.stage && result.deficit < closestFailure.deficit - EPS)
+              (result.stage === closestFailure.stage && result.deficit < closestFailure.deficit)
             ) {
               closestFailure = result;
             }
@@ -253,9 +259,9 @@ export function solve(raw) {
 
           if (
             best === null ||
-            result.minCornerMargin > best.minCornerMargin + EPS ||
-            (Math.abs(result.minCornerMargin - best.minCornerMargin) <= EPS &&
-              result.sumDistance < best.sumDistance - EPS)
+            result.minCornerMargin > best.minCornerMargin ||
+            (result.minCornerMargin === best.minCornerMargin &&
+              result.sumDistance < best.sumDistance)
             // minCornerMargin 与距离和均持平时保留先枚举到的（字典序最小）组合
           ) {
             best = result;

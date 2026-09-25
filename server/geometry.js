@@ -21,24 +21,31 @@ export function pointDistance(a, b) {
 
 /**
  * 数值稳定的叉积符号：返回 (b-a)×(c-a) 的符号（1/0/-1）。
- * 先以参与量的最大绝对值归一化再相乘，避免超大有限坐标（如 1e307 量级）
- * 下坐标差相乘溢出为 Infinity，或 Infinity-Infinity 得到 NaN。
+ * 按“坐标轴”分别归一化（二维行列式的列尺度）：x、y 分量各取自身轴上的最大
+ * 绝对值。这样在极端长宽比（边向量宽 1e308、高 1e-100，叉积真值达 1e208）下，
+ * 小分量不会被无关的超大分量按统一尺度除尽而下溢为 0，从而把非共线误判为共线；
+ * 同时也避免超大有限坐标下乘积溢出为 Infinity、Infinity-Infinity 得到 NaN。
  */
 export function crossSign(a, b, c) {
   const u1 = b.x - a.x;
   const v1 = b.y - a.y;
   const u2 = c.x - a.x;
   const v2 = c.y - a.y;
-  const m = Math.max(Math.abs(u1), Math.abs(v1), Math.abs(u2), Math.abs(v2));
-  if (m === 0) return 0;
-  const z = (u1 / m) * (v2 / m) - (v1 / m) * (u2 / m);
+  const sx = Math.max(Math.abs(u1), Math.abs(u2));
+  const sy = Math.max(Math.abs(v1), Math.abs(v2));
+  if (sx === 0 || sy === 0) return 0;
+  const z = (u1 / sx) * (v2 / sy) - (v1 / sy) * (u2 / sx);
   return z > 0 ? 1 : z < 0 ? -1 : 0;
 }
 
 /**
  * 点 p 到过 a、b 的直线的有符号距离（沿 a->b 方向，左侧为正）。
- * 中间量按最大参与尺度归一化，保证坐标在整个有限 double 范围内
- * 都不会因叉积相乘溢出而错误返回 Infinity/NaN。
+ * 先由边向量按其最大分量归一化得到单位方向（nx, ny）（恒有 |nx|、|ny| <= 1，
+ * 边长本身即使达到 ~1e308 也不会在 hypot 中溢出），再做叉积
+ * nx*qy - ny*qx：乘积单项不超过有限 double 上界，且小尺度分量（如法向
+ * 偏移仅 1e-100、边沿 x 宽 1e308）不会被统一大尺度除尽下溢为 0，
+ * 从而在整个有限 double 坐标范围与极端长宽比下都返回正确的有量纲距离。
+ * 仅当距离真值本身超过 double 上界时才得到 ±Infinity。
  */
 export function lineSide(p, a, b) {
   const dx = b.x - a.x;
@@ -49,14 +56,11 @@ export function lineSide(p, a, b) {
     const m = Math.max(Math.abs(qx), Math.abs(qy));
     return m === 0 ? 0 : Math.hypot(qx / m, qy / m) * m;
   }
-  const s = Math.max(Math.abs(dx), Math.abs(dy), Math.abs(qx), Math.abs(qy));
-  if (s === 0) return 0;
-  const l = Math.hypot(dx / s, dy / s);
-  if (l === 0) {
-    return Math.hypot(qx / s, qy / s) * s; // a、b 在该尺度下已退化为同一点
-  }
-  const c = (dx / s) * (qy / s) - (dy / s) * (qx / s);
-  return (c / l) * s;
+  const m = Math.max(Math.abs(dx), Math.abs(dy));
+  const h = Math.hypot(dx / m, dy / m);
+  const nx = dx / m / h;
+  const ny = dy / m / h;
+  return nx * qy - ny * qx;
 }
 
 /**
@@ -88,21 +92,26 @@ export function distanceToSegment(p, a, b) {
 
 export function polygonSignedArea(poly) {
   // 先按顶点最大尺度归一化叉积，避免超大坐标下 shoelace 求和溢出或 NaN。
-  let mx = 0;
+  // x、y 分量分别取自身轴的最大尺度（二维行列式的列尺度）后再做 shoelace，
+  // 最后乘回 sx*sy。既避免超大坐标下乘积求和溢出或 NaN，也避免极端长宽比
+  // （宽 1e308、高 1e-100，面积真值 1e208）时小分量被统一大尺度除尽
+  // 下溢为 0，把有效面积误判为退化。
+  let sx = 0;
+  let sy = 0;
   for (const p of poly) {
-    if (Math.abs(p.x) > mx) mx = Math.abs(p.x);
-    if (Math.abs(p.y) > mx) mx = Math.abs(p.y);
+    if (Math.abs(p.x) > sx) sx = Math.abs(p.x);
+    if (Math.abs(p.y) > sy) sy = Math.abs(p.y);
   }
-  if (mx === 0) return 0;
+  if (sx === 0 || sy === 0) return 0;
   let s = 0;
   for (let i = 0; i < poly.length; i++) {
     const a = poly[i];
     const b = poly[(i + 1) % poly.length];
-    s += (a.x / mx) * (b.y / mx) - (b.x / mx) * (a.y / mx);
+    s += (a.x / sx) * (b.y / sy) - (b.x / sx) * (a.y / sy);
   }
-  // 真实面积超过 double 上限时，mx*mx 为 Infinity，仍保留正确符号；
+  // 真实面积超过 double 上限时，sx*sy 为 Infinity，仍保留正确符号；
   // 退化（共线）情形 s 为 0，返回 0。
-  return s === 0 ? 0 : (s / 2) * (mx * mx);
+  return s === 0 ? 0 : (s / 2) * (sx * sy);
 }
 
 /**

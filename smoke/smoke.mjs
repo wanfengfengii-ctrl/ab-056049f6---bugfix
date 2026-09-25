@@ -61,6 +61,21 @@ const hugePayload = {
   minSpacing: 1,
 };
 
+// 极端有限长宽比：四点组成宽 1e308、高 1e-100 的矩形（面积真值 1e208），
+// 批准边界相同，重心 (5e307, 5e-101) 严格在内，最近水平边裕量 5e-101。
+// 不得因下溢把有效凸包误判为 hull_degenerate。
+const extremeRect = [
+  { x: 0, y: 0 }, { x: 1e308, y: 0 }, { x: 1e308, y: 1e-100 }, { x: 0, y: 1e-100 },
+];
+const extremeAspectPayload = {
+  rails: [[extremeRect[0]], [extremeRect[1]], [extremeRect[2]], [extremeRect[3]]],
+  boundary: extremeRect,
+  cg: { x: 5e307, y: 5e-101 },
+  toleranceX: 0,
+  toleranceY: 0,
+  minSpacing: 0,
+};
+
 async function waitReady(proc, deadlineMs = 10000) {
   const start = Date.now();
   while (Date.now() - start < deadlineMs) {
@@ -151,7 +166,34 @@ async function main() {
     check('其他指标（距离和/间距）保持有限',
       Number.isFinite(huge.metrics?.sumDistance) && Number.isFinite(huge.metrics?.minGap));
 
-    console.log('7) POST 非法输入返回 422');    const invResp = await fetch(`${BASE}/api/fixture-plans`, {
+    console.log('7) POST /api/fixture-plans 极端有限长宽比（宽 1e308、高 1e-100）');
+    const extResp = await fetch(`${BASE}/api/fixture-plans`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(extremeAspectPayload),
+    });
+    check('返回 200', extResp.status === 200, `status=${extResp.status}`);
+    const ext = await extResp.json();
+    check('feasible=true（不被误判为 hull_degenerate）',
+      ext.feasible === true, `reason=${ext.reason}`);
+    check('四个唯一候选点全部被选中',
+      Array.isArray(ext.selection) && ext.selection.length === 4 &&
+        JSON.stringify(ext.metrics?.indices) === '[0,0,0,0]',
+      `got=${JSON.stringify(ext.metrics?.indices)}`);
+    check('凸包包含 4 个顶点',
+      Array.isArray(ext.hull) && ext.hull.length === 4,
+      `hullLen=${ext.hull?.length}`);
+    check('minMargin 为有限正数且约为 5e-101',
+      Number.isFinite(ext.metrics?.minMargin) && ext.metrics.minMargin > 0 &&
+        Math.abs(ext.metrics.minMargin - 5e-101) / 5e-101 < 1e-9,
+      `got=${ext.metrics?.minMargin}`);
+    check('四个 corners[].margin 均为有限正数且约为 5e-101',
+      Array.isArray(ext.corners) && ext.corners.length === 4 &&
+        ext.corners.every((c) => Number.isFinite(c.margin) && c.margin > 0 &&
+          Math.abs(c.margin - 5e-101) / 5e-101 < 1e-9),
+      `got=${JSON.stringify(ext.corners?.map((c) => c.margin))}`);
+
+    console.log('8) POST 非法输入返回 422');    const invResp = await fetch(`${BASE}/api/fixture-plans`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ rails: [], boundary: [], cg: { x: 0, y: 0 } }),
@@ -160,7 +202,7 @@ async function main() {
     const inv = await invResp.json();
     check('422 含错误说明', typeof inv.detail === 'string' && inv.detail.length > 0);
 
-    console.log('8) POST 非法 JSON 返回 400');
+    console.log('9) POST 非法 JSON 返回 400');
     const junkResp = await fetch(`${BASE}/api/fixture-plans`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
