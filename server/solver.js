@@ -147,7 +147,9 @@ function evaluate(indices, input, corners) {
 
   const hull = ensureCCW(convexHull(points));
   const area = polygonSignedArea(hull);
-  if (hull.length < 3 || area <= EPS) {
+  // 面积为精确值：仅当确实共线/重合（面积恰为 0）时才判定退化，
+  // 不能再按绝对阈值把面积极小但有效的凸包（跨量级坐标）误判为退化
+  if (hull.length < 3 || area <= 0) {
     // 退化凸包：用角点到凸包点集/线段的最近距离量化“差多少”
     let worst = 0;
     for (const c of corners) {
@@ -176,7 +178,9 @@ function evaluate(indices, input, corners) {
   }));
   const minCornerMargin = Math.min(...cornerResults.map((c) => c.margin));
 
-  if (minCornerMargin <= EPS) {
+  // 裕量为精确值：严格在内即 > 0；恰为 0 表示落在边上（不算严格在内），
+  // 任意小的正裕量（如极端长宽比下的 5e-101）都应判定为可行
+  if (minCornerMargin <= 0) {
     return {
       status: 'corners_failed',
       stage: 3,

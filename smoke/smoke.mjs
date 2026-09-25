@@ -61,6 +61,21 @@ const hugePayload = {
   minSpacing: 1,
 };
 
+// 极端长宽比：宽 1e308、高 1e-100 的有限矩形（分量相差 1e408 倍）。
+// 凸包面积 1e208，重心 (5e307, 5e-101) 严格在内，到最近水平边裕量 5e-101。
+// 必须判定可行、凸包四顶点、裕量有限且约为 5e-101，不得误判 hull_degenerate。
+const sliverRect = [
+  { x: 0, y: 0 }, { x: 1e308, y: 0 }, { x: 1e308, y: 1e-100 }, { x: 0, y: 1e-100 },
+];
+const sliverPayload = {
+  rails: [[sliverRect[0]], [sliverRect[1]], [sliverRect[2]], [sliverRect[3]]],
+  boundary: sliverRect,
+  cg: { x: 5e307, y: 5e-101 },
+  toleranceX: 0,
+  toleranceY: 0,
+  minSpacing: 0,
+};
+
 async function waitReady(proc, deadlineMs = 10000) {
   const start = Date.now();
   while (Date.now() - start < deadlineMs) {
@@ -151,7 +166,33 @@ async function main() {
     check('其他指标（距离和/间距）保持有限',
       Number.isFinite(huge.metrics?.sumDistance) && Number.isFinite(huge.metrics?.minGap));
 
-    console.log('7) POST 非法输入返回 422');    const invResp = await fetch(`${BASE}/api/fixture-plans`, {
+    console.log('7) POST /api/fixture-plans 极端长宽比（1e308 × 1e-100）');
+    const sliverResp = await fetch(`${BASE}/api/fixture-plans`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(sliverPayload),
+    });
+    check('返回 200', sliverResp.status === 200, `status=${sliverResp.status}`);
+    const sliver = await sliverResp.json();
+    check('feasible=true', sliver.feasible === true,
+      `reason=${sliver.reason} message=${sliver.message}`);
+    check('四个唯一候选点均被选中',
+      Array.isArray(sliver.selection) && sliver.selection.length === 4 &&
+        JSON.stringify(sliver.selection.map((s) => s.candidateNumber)) === '[1,1,1,1]',
+      `got=${JSON.stringify(sliver.selection)}`);
+    check('凸包含四个顶点', Array.isArray(sliver.hull) && sliver.hull.length === 4,
+      `got=${sliver.hull?.length}`);
+    check('minMargin 为有限正数且约为 5e-101',
+      Number.isFinite(sliver.metrics?.minMargin) && sliver.metrics.minMargin > 0 &&
+        Math.abs(sliver.metrics.minMargin - 5e-101) / 5e-101 < 1e-9,
+      `got=${sliver.metrics?.minMargin}`);
+    check('四个角点裕量均为有限正数且约为 5e-101',
+      Array.isArray(sliver.corners) && sliver.corners.length === 4 &&
+        sliver.corners.every((c) => Number.isFinite(c.margin) && c.margin > 0 &&
+          Math.abs(c.margin - 5e-101) / 5e-101 < 1e-9),
+      `got=${JSON.stringify(sliver.corners?.map((c) => c.margin))}`);
+
+    console.log('8) POST 非法输入返回 422');    const invResp = await fetch(`${BASE}/api/fixture-plans`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ rails: [], boundary: [], cg: { x: 0, y: 0 } }),
@@ -160,7 +201,7 @@ async function main() {
     const inv = await invResp.json();
     check('422 含错误说明', typeof inv.detail === 'string' && inv.detail.length > 0);
 
-    console.log('8) POST 非法 JSON 返回 400');
+    console.log('9) POST 非法 JSON 返回 400');
     const junkResp = await fetch(`${BASE}/api/fixture-plans`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },

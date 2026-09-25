@@ -207,3 +207,37 @@ test('超大有限坐标：内侧组合也可行但裕量更小（9e306 < 1e307�
   assert.ok(Math.abs(outer.metrics.minMargin - 1e307) / 1e307 < 1e-12);
   assert.ok(outer.metrics.minMargin > inner.metrics.minMargin);
 });
+
+test('极端长宽比(宽1e308×高1e-100)：四点支撑可行，凸包四顶点，裕量约为 5e-101', () => {
+  // 每轨恰一个候选，组成宽 1e308、高 1e-100 的矩形；边界与矩形相同，重心在几何中心。
+  // 凸包面积 1e208，重心严格在内，到最近水平边裕量 5e-101——
+  // 任何按最大分量归一化的实现都会把 1e-100 下溢为 0 而误判 hull_degenerate。
+  const rect = [
+    { x: 0, y: 0 }, { x: 1e308, y: 0 }, { x: 1e308, y: 1e-100 }, { x: 0, y: 1e-100 },
+  ];
+  const r = solve({
+    rails: [[rect[0]], [rect[1]], [rect[2]], [rect[3]]],
+    boundary: rect,
+    cg: { x: 5e307, y: 5e-101 },
+    toleranceX: 0,
+    toleranceY: 0,
+    minSpacing: 0,
+  });
+  assert.equal(r.feasible, true);
+  assert.equal(r.evaluatedCombinations, 1);
+  // 四个唯一候选点全部被选中
+  assert.equal(r.selection.length, 4);
+  assert.deepEqual(r.selection.map((s) => s.candidateNumber), [1, 1, 1, 1]);
+  // 凸包含四个顶点
+  assert.equal(r.hull.length, 4);
+  // minMargin 与四个角点裕量均为有限正数且约为 5e-101
+  assert.ok(Number.isFinite(r.metrics.minMargin) && r.metrics.minMargin > 0);
+  assert.ok(Math.abs(r.metrics.minMargin - 5e-101) / 5e-101 < 1e-9,
+    `minMargin 应约为 5e-101，实际 ${r.metrics.minMargin}`);
+  assert.equal(r.corners.length, 4);
+  for (const c of r.corners) {
+    assert.ok(Number.isFinite(c.margin) && c.margin > 0, '角点裕量必须是有限正数');
+    assert.ok(Math.abs(c.margin - 5e-101) / 5e-101 < 1e-9, `角点裕量异常：${c.margin}`);
+  }
+  assert.ok(Number.isFinite(r.metrics.minGap));
+});

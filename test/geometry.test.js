@@ -111,3 +111,49 @@ test('超大坐标：多边形有符号距离返回有限值', () => {
   assert.ok(Number.isFinite(d));
   assert.ok(d > 0);
 });
+
+// ---- 极端长宽比：宽 1e308、高 1e-100 的有限矩形（分量相差 1e408 倍） ----
+
+const W = 1e308;
+const T = 1e-100;
+const sliverCCW = [
+  { x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: T }, { x: 0, y: T },
+];
+
+test('极端长宽比：凸包保留全部 4 个顶点而非塌缩为对角线', () => {
+  const hull = convexHull(sliverCCW);
+  assert.equal(hull.length, 4);
+  assert.ok(polygonSignedArea(ensureCCW(hull)) > 0);
+});
+
+test('极端长宽比：crossSign 不被 1e-408 下溢吞掉', () => {
+  // (1e308,0)×(1e308,1e-100) = 1e208 > 0；(0,1e-100)×(1e308,1e-100) = -1e208 < 0
+  assert.equal(crossSign({ x: 0, y: 0 }, { x: W, y: 0 }, { x: W, y: T }), 1);
+  assert.equal(crossSign({ x: 0, y: 0 }, { x: 0, y: T }, { x: W, y: T }), -1);
+  assert.equal(crossSign({ x: 0, y: 0 }, { x: W, y: T }, { x: 0, y: T }), 1);
+  assert.equal(crossSign({ x: 0, y: 0 }, { x: W, y: 0 }, { x: 5e307, y: 0 }), 0);
+});
+
+test('极端长宽比：面积约为 1e208 而非被归一化吞成 0', () => {
+  const area = polygonSignedArea(sliverCCW);
+  assert.ok(Number.isFinite(area));
+  assert.ok(Math.abs(area - 1e208) / 1e208 < 1e-12, `面积异常：${area}`);
+});
+
+test('极端长宽比：中心到最近水平边的有符号距离约为 5e-101', () => {
+  const cg = { x: 5e307, y: 5e-101 };
+  const bottom = lineSide(cg, sliverCCW[0], sliverCCW[1]);
+  assert.ok(Number.isFinite(bottom) && bottom > 0);
+  assert.ok(Math.abs(bottom - 5e-101) / 5e-101 < 1e-9, `到底边距离异常：${bottom}`);
+  const m = convexMargin(sliverCCW, cg);
+  assert.ok(Number.isFinite(m) && m > 0);
+  assert.ok(Math.abs(m - 5e-101) / 5e-101 < 1e-9, `最小裕量异常：${m}`);
+});
+
+test('极端长宽比：顶点在边界上、外部点判定为不在', () => {
+  assert.equal(pointInPolygon(sliverCCW, { x: 0, y: 0 }), true);
+  assert.equal(pointInPolygon(sliverCCW, { x: W, y: T }), true);
+  assert.equal(pointInPolygon(sliverCCW, { x: 5e307, y: 5e-101 }), true);
+  assert.equal(pointInPolygon(sliverCCW, { x: 5e307, y: 2e-100 }), false);
+  assert.equal(pointInPolygon(sliverCCW, { x: -1, y: 5e-101 }), false);
+});
